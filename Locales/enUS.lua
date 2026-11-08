@@ -937,4 +937,6 @@ CK.L = {
     V_PAGE = "Page",
     V_SAME_PAGE1 = "As page 1",
     TOAST_SAME_AS_PAGE1 = "Page %d: the same as page 1 again",
+    -- The wand action (Mapping.lua: The wand)
+    MAP_WAND = "Wand, else the game's button",
 }

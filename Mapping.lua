@@ -386,6 +386,11 @@ end
 -- "Nothing": a button of the game's that does nothing in a layer (L3 freed
 -- from the game's autorun, so its trigger layers can work)
 M.NOTHING = "none:none"
+-- "Wand, else the game's button": a live enemy targeted, the wand shoots it;
+-- otherwise the game's own button of that place runs, pressed and released
+-- (X: interact, tap or hold to loot). See "The wand" below.
+M.WAND = "wand:game"
+M.WAND_ICON = "Interface\\Icons\\Ability_ShootWand"
 local NOOP_BINDING = "CONTROLLERKEYBOARD_NOOP"
 
 -- L3 / R3 / LB / RB alone keep the game's function (autorun, ping, its
@@ -731,7 +736,7 @@ end
 -- gamepad), and runs that layer's spell, item or macro. A game function is
 -- a key binding: it needs the key to itself, all its layers.
 ---------------------------------------------------------------------------
-local ROUTABLE = { spell = true, item = true, macro = true, wheel = true }
+local ROUTABLE = { spell = true, item = true, macro = true, wheel = true, wand = true }
 
 function M.Routable(action)
     return type(action) == "string" and ROUTABLE[action:match("^(%a+):") or ""] or false
@@ -892,6 +897,7 @@ end
 function M:ActionName(action)
     if not action then return nil end
     if action == M.NOTHING then return L.MAP_NO_ACTION end
+    if action == M.WAND then return L.MAP_WAND end
     local kind, value = action:match("^(%a+):(.+)$")
     local fixed = FIXED_FACE[action:match("^bar:top:(%a)$") or ""]
     if fixed then return L["NAT_" .. fixed] end
@@ -925,6 +931,7 @@ end
 function M:ActionIcon(action)
     if not action then return nil end
     if action == M.NOTHING then return "Interface\\Buttons\\UI-GroupLoot-Pass-Up" end
+    if action == M.WAND then return M.WAND_ICON end
     local kind, value = action:match("^(%a+):(.+)$")
     local fixed = FIXED_FACE[action:match("^bar:top:(%a)$") or ""]
     if fixed then return FIXED_ICON[fixed] end
@@ -996,6 +1003,7 @@ function M:Catalog(tab, forSlot, noBound)
         -- the game's freed: L3 without the game's autorun...)
         list[#list + 1] = { header = L.CAT_GAMEPAD }
         list[#list + 1] = { action = M.NOTHING, name = L.MAP_NO_ACTION, icon = M:ActionIcon(M.NOTHING) }
+        list[#list + 1] = { action = M.WAND, name = L.MAP_WAND, icon = M.WAND_ICON }
         for _, action in ipairs(M.PAD_FUNCTIONS) do
             if (not action:find("^bar:") or CK.Paddles:NativeButton(action)) and not (noBound and bound(action)) then
                 list[#list + 1] = { action = action, name = M:ActionName(action), icon = M:ActionIcon(action) }
@@ -1206,6 +1214,107 @@ local function actionButton(comboId, action)
     return b
 end
 
+---------------------------------------------------------------------------
+-- The wand ("Wand, else the game's button", M.WAND). On a press: a live
+-- enemy targeted, the wand shoots it ("!": never toggled off by a second
+-- press); else the game's button there is pressed, and released on the
+-- release (X: the game's interact, its tap and its hold to loot as
+-- before). A soft target the interact has just targeted is shot on the
+-- release. RB held (ROUTE, "ckrbstop"): the wand stops, as the game's
+-- RB + X stops a swing. The router clicks it with the name of the click
+-- ("ckLT" on the press, "ckupLT" on the release): the edge is read from it.
+-- Rewritten out of combat when the gear or the spells change (no wand:
+-- the game's button alone). From Wowf Tweaks' "/wowf x" (Dave's own
+-- addon), folded in here as an action like the others.
+---------------------------------------------------------------------------
+local WAND_SPELL = 5019
+local LIVE_ENEMY = "[@target,harm,nodead]"
+local WAND = [[
+    local came = button or ""
+    if strfind(came, "ckrbstop", 1, true) == 1 then
+        local stop = self:GetAttribute("ck-wand-stop")
+        if not stop then return false end
+        self:SetAttribute("macrotext", stop)
+        return
+    end
+    local up = strfind(came, "ckup", 1, true) == 1
+    self:SetAttribute("macrotext", self:GetAttribute(up and "ck-wand-up" or "ck-wand-down") or "")
+]]
+local wands = {}        -- comboId -> its secure button
+local wandHeader
+M.wands = wands
+
+function M.WandEquipped()
+    local item = GetInventoryItemID and GetInventoryItemID("player", INVSLOT_RANGED or 18)
+    if not (item and C_Item and C_Item.GetItemInfoInstant and Enum and Enum.ItemClass) then return false end
+    local _, _, _, _, _, classID, subclassID = C_Item.GetItemInfoInstant(item)
+    if not (classID == Enum.ItemClass.Weapon and subclassID == Enum.ItemWeaponSubclass.Wand) then return false end
+    local known = C_SpellBook and C_SpellBook.IsSpellKnown or IsSpellKnown
+    return known and known(WAND_SPELL) and true or false
+end
+
+-- Press, release and stop macros for a wand on a button's layer ("X:",
+-- "UP:LT@2": the game's button there, whatever the page)
+function M:WandMacros(comboId)
+    local inputId, layer = M.ParseReplacedKey(comboId)
+    local input = inputId and M.BY_ID[inputId]
+    local native = input and self:NativeBarButton(input, layer)
+    local name = native and native:GetName()
+    local press = name and ("/click " .. name .. " LeftButton true") or ""
+    local release = name and ("/click " .. name .. " LeftButton false") or ""
+    local shoot = M.WandEquipped() and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(WAND_SPELL)
+    if not shoot then return press, release, nil end
+    local cast = "/cast " .. LIVE_ENEMY .. " !" .. shoot
+    local stop = "/stopmacro " .. LIVE_ENEMY
+    return cast .. "\n" .. stop .. "\n" .. press, stop .. "\n" .. release .. "\n" .. cast, "/cast " .. shoot
+end
+
+local function setWand(b, comboId)
+    local down, up, stop = M:WandMacros(comboId)
+    b:SetAttribute("ck-wand-down", down)
+    b:SetAttribute("ck-wand-up", up)
+    b:SetAttribute("ck-wand-stop", stop)
+end
+
+local function wandButton(comboId)
+    local b = wands[comboId]
+    if not b then
+        local n = 0
+        for _ in pairs(wands) do n = n + 1 end
+        b = CK.NewFrame("Button", "ControllerKeyboardWandButton" .. (n + 1), nil, "SecureActionButtonTemplate")
+        b:RegisterForClicks("AnyDown", "AnyUp")
+        b:SetAttribute("type", "macro")
+        wandHeader = wandHeader or CK.NewFrame("Frame", nil, nil, "SecureHandlerBaseTemplate")
+        SecureHandlerWrapScript(b, "OnClick", wandHeader, WAND)
+        b:Hide()
+        wands[comboId] = b
+    end
+    setWand(b, comboId)
+    return b
+end
+
+-- The gear or the spells changed: each wand's macros (out of combat)
+function M:UpdateWands()
+    if InCombatLockdown() then
+        self.wandsLater = true
+        return
+    end
+    self.wandsLater = nil
+    for comboId, b in pairs(wands) do setWand(b, comboId) end
+    -- A wand put on or taken off: RB + the button (the routers)
+    local worn = M.WandEquipped()
+    if next(wands) and self.wandWorn ~= nil and worn ~= self.wandWorn then self:Apply() end
+    self.wandWorn = worn
+end
+
+-- The button a router (or a key) clicks for a spell, an item, a macro, a
+-- wheel or the wand
+local function targetButton(comboId, action)
+    if action:find("^wheel:") then return CK.ConsumableWheel:Toggle(action:match("^wheel:(.+)$"), comboId) end
+    if action:find("^wand:") then return wandButton(comboId) end
+    return actionButton(comboId, action)
+end
+
 -- The game's gamepad ping, held then released, opens its wheel and waits
 -- for the same key to be pressed again, a full-screen listener shown until
 -- then: a key of ours changed meanwhile left it up for good, every A in a
@@ -1234,7 +1343,7 @@ local function bindAction(combo, comboId, action, replace)
         -- Its key opens that wheel
         click = CK.ConsumableWheel:Toggle(value, comboId):GetName()
     elseif M.Routable(action) then
-        local b = actionButton(comboId, action)
+        local b = targetButton(comboId, action)
         -- Pressed by its key: acts on the press
         b:SetAttribute("useOnKeyDown", true)
         click = b:GetName()
@@ -1270,33 +1379,11 @@ local ROUTE = [[
     end
     self:SetAttribute("useOnKeyDown", true)
     self:SetAttribute("ck-pressed", nil)
-    -- LB / RB held with a button of the game's pad: the game's, never ours
-    -- (reported: LB + D-pad down opened the quick phrases put on D-pad down,
-    -- party member 3 never targeted). Read from the pad (RB adds no
-    -- modifier; LB's Ctrl key falls back here). The game's targeting bar on
-    -- (ally, enemy, its shortcuts) gets the press, through a relay on its
-    -- button here, as the game's own binding gives it to the bar on
-    local lb, rb = self:GetAttribute("ck-lb"), self:GetAttribute("ck-rb")
-    if lb or rb then
-        local held = GetGamePadState()
-        local hb = held and held.buttons
-        if hb and ((lb and hb[lb]) or (rb and hb[rb])) then
-            for i = 1, 3 do
-                local game = self:GetFrameRef("ck-sh" .. i)
-                if game and self:GetAttribute("ck-sh-on" .. i) and game:IsVisible() then
-                    return "cksh" .. i
-                end
-            end
-            return false
-        end
-    end
     -- The trigger toggle on (Toggle.lua): its layer, held or toggled; a
     -- trigger held was used
     local layer
     local toggle = self:GetFrameRef("toggle")
     if toggle then
-        if toggle:GetAttribute("ck-held-LT") then toggle:SetAttribute("ck-used-LT", true) end
-        if toggle:GetAttribute("ck-held-RT") then toggle:SetAttribute("ck-used-RT", true) end
         layer = toggle:GetAttribute("ck-layer") or ""
     else
         local state = GetGamePadState()
@@ -1316,7 +1403,7 @@ local ROUTE = [[
     -- The game's bar page (Pages, above): the id its top D-pad button has
     -- now. A page with its own on this layer runs it ("none": Nothing
     -- there), else page 1's
-    local key = layer
+    local key, none = layer, false
     local pages = self:GetAttribute("ck-pages")
     local ref = pages and self:GetFrameRef("ck-page")
     if ref then
@@ -1324,12 +1411,39 @@ local ROUTE = [[
         for p = 2, pages do
             if id == self:GetAttribute("ck-page-id" .. p) then
                 local own = self:GetAttribute("ck-has-" .. layer .. "p" .. p)
-                if own == "none" then return false end
-                if own then key = layer .. "p" .. p end
+                if own == "none" then none = true end
+                if own and own ~= "none" then key = layer .. "p" .. p end
             end
         end
     end
-    if not self:GetAttribute("ck-has-" .. key) then return false end
+    -- LB / RB held with a button of the game's pad: the game's, never ours
+    -- (reported: LB + D-pad down opened the quick phrases put on D-pad down,
+    -- party member 3 never targeted). Read from the pad (RB adds no
+    -- modifier; LB's Ctrl key falls back here). The game's targeting bar on
+    -- (ally, enemy, its shortcuts) gets the press, through a relay on its
+    -- button here, as the game's own binding gives it to the bar on
+    local lb, rb = self:GetAttribute("ck-lb"), self:GetAttribute("ck-rb")
+    if lb or rb then
+        local held = GetGamePadState()
+        local hb = held and held.buttons
+        if hb and ((lb and hb[lb]) or (rb and hb[rb])) then
+            -- RB with the wand of this layer and page: the wand stopped
+            if rb and hb[rb] and self:GetAttribute("ck-rbstop-" .. key) then return "ckrbstop" .. key end
+            for i = 1, 3 do
+                local game = self:GetFrameRef("ck-sh" .. i)
+                if game and self:GetAttribute("ck-sh-on" .. i) and game:IsVisible() then
+                    return "cksh" .. i
+                end
+            end
+            return false
+        end
+    end
+    -- The trigger toggle: a trigger held was used
+    if toggle then
+        if toggle:GetAttribute("ck-held-LT") then toggle:SetAttribute("ck-used-LT", true) end
+        if toggle:GetAttribute("ck-held-RT") then toggle:SetAttribute("ck-used-RT", true) end
+    end
+    if none or not self:GetAttribute("ck-has-" .. key) then return false end
     self:SetAttribute("ck-pressed", key)
     return "ck" .. key
 ]]
@@ -1339,7 +1453,8 @@ local routers = {}      -- paddle -> its secure button
 
 -- A wheel on a layer gets the key's release too (its hold option)
 local function setRelease(r, layer, b, action)
-    local wheel = b and type(action) == "string" and action:find("^wheel:") and b
+    -- (the wand too: the game's button let go)
+    local wheel = b and type(action) == "string" and (action:find("^wheel:") or action:find("^wand:")) and b
     r:SetAttribute("ck-up-" .. layer, wheel and true or nil)
     r:SetAttribute("*clickbutton-ckup" .. layer, wheel or nil)
 end
@@ -1416,8 +1531,7 @@ local function routeKeys(input, key, taken)
         local action = M:EffectiveAction(input, layer)
         local b
         if M.Routable(action) and not taken[M:ArrivalPrefix(layer)] then
-            b = action:find("^wheel:") and CK.ConsumableWheel:Toggle(action:match("^wheel:(.+)$"), input.id .. ":" .. layer)
-                or actionButton(input.id .. ":" .. layer, action)
+            b = targetButton(input.id .. ":" .. layer, action)
             -- Clicked by the key's button, once per press
             b:SetAttribute("useOnKeyDown", false)
             r:SetAttribute("*clickbutton-ck" .. layer, b)
@@ -1699,13 +1813,16 @@ end
 local function setTarget(r, input, key, comboId, t)
     local b
     if t and t.action then
-        b = t.action:find("^wheel:") and CK.ConsumableWheel:Toggle(t.action:match("^wheel:(.+)$"), comboId)
-            or actionButton(comboId, t.action)
+        b = targetButton(comboId, t.action)
         -- Clicked by the key's button, once per press
         b:SetAttribute("useOnKeyDown", false)
     elseif t and t.bar then
         b = relay(t.bar)
     end
+    -- RB held: the wand stopped (ROUTE); no wand worn: the game's RB + X
+    local wand = t and t.action == M.WAND and M.WandEquipped() and b or nil
+    r:SetAttribute("ck-rbstop-" .. key, wand and true or nil)
+    r:SetAttribute("*clickbutton-ckrbstop" .. key, wand)
     r:SetAttribute("*clickbutton-ck" .. key, b)
     r:SetAttribute("ck-has-" .. key, b and true or (t and t.none and "none") or nil)
     setRelease(r, key, b, t and t.action)
@@ -1793,7 +1910,20 @@ end
 -- that page's own. The router needs nothing: it reads the page on each
 -- press. A hook after the game's own function, a frame later: the game's
 -- paging never runs our code.
+-- The page is also watched (a tenth of a second): reported, a page turned
+-- by a key of another addon left page 1's pictures up, page 2's never
+-- drawn; whatever path the game takes, the pictures follow.
 function M:HookPages()
+    if not self.pageWatch then
+        local elapsed = 0
+        self.pageWatch = CK.NewFrame("Frame")
+        self.pageWatch:SetScript("OnUpdate", function(_, dt)
+            elapsed = elapsed + (dt or 0)
+            if elapsed < 0.1 then return end
+            elapsed = 0
+            if M.shownPage and M:CurrentPage() ~= M.shownPage then M:OnPageChanged() end
+        end)
+    end
     local unit = GamepadMainActionBarFrame and GamepadMainActionBarFrame.PageUnit
     if self.pagesHooked or not (unit and unit.SetCurrentPage) then return end
     self.pagesHooked = true
@@ -1803,9 +1933,7 @@ function M:HookPages()
 end
 
 function M:OnPageChanged()
-    local page = self:CurrentPage()
-    if page == self.shownPage then return end
-    self.shownPage = page
+    if self:CurrentPage() == self.shownPage then return end
     self:UpdateMarks()
     if CK.Config and CK.Config:IsOpen() and not InCombatLockdown() then CK.Config:Render() end
 end
@@ -1821,6 +1949,8 @@ function M:Apply()
     end
     self.pending = false
     self.applying = true
+    -- (RB + a wand's button depends on it: see UpdateWands)
+    self.wandWorn = M.WandEquipped()
     owner = owner or CK.NewFrame("Frame")
     takeOwner = takeOwner or CK.NewFrame("Frame")
     unbindAll(owner, self.bound, false)
@@ -2097,8 +2227,9 @@ function M:UpdateMarks()
         end
     end
     local wanted = {}
+    local page = self:CurrentPage()
+    self.shownPage = page
     if self:ReplaceOn() and self:OwnKeys() then
-        local page = self:CurrentPage()
         for comboId, action in pairs(settings().replaced) do
             local inputId, layer, onPage = M.ParseReplacedKey(comboId)
             local input = inputId and M.BY_ID[inputId]
@@ -2108,13 +2239,15 @@ function M:UpdateMarks()
                 if page > 1 and self.padRouted[inputId] then action = self:ReplacedOn(inputId, layer, page) end
                 wanted[native] = action
             end
+            -- The wand: the game's own picture stays (interact, loot, talk)
+            if native and action == M.WAND then wanted[native] = nil end
         end
         if page > 1 then
             for _, input in ipairs(M.INPUTS) do
                 for _, layer in ipairs(M.LAYERS) do
                     local own = self.padRouted[input.id] and self:Replaceable(input, layer)
                         and self:ReplacedOn(input.id, layer, page)
-                    local native = own and self:NativeBarButton(input, layer)
+                    local native = own and own ~= M.WAND and self:NativeBarButton(input, layer)
                     if native then wanted[native] = own end
                 end
             end
@@ -2159,8 +2292,17 @@ function M:Diagnose()
         .. format(" | pending %s, game sets %s", tostring(self.pending), stack and #stack or "?"))
     -- The game's page, and the ids the routers read it from (Pages)
     local ref, ids = self:PageIds()
-    DEFAULT_CHAT_FRAME:AddMessage(format("  page %d, id now %s, page ids %s", self:CurrentPage(),
-        tostring(ref and ref:GetID()), ids and table.concat(ids, " / ") or "none"))
+    DEFAULT_CHAT_FRAME:AddMessage(format("  page %d, id now %s, page ids %s, hooked %s, drawn for page %s",
+        self:CurrentPage(), tostring(ref and ref:GetID()), ids and table.concat(ids, " / ") or "none",
+        tostring(self.pagesHooked), tostring(self.shownPage)))
+    local routed, shown = {}, {}
+    for id in pairs(self.padRouted) do routed[#routed + 1] = id end
+    for native, mark in pairs(marks) do
+        if mark:IsShown() then shown[#shown + 1] = tostring(native:GetName()) .. "=" .. tostring(mark.action) end
+    end
+    table.sort(routed)
+    table.sort(shown)
+    DEFAULT_CHAT_FRAME:AddMessage("  routed " .. table.concat(routed, " ") .. " | marks " .. table.concat(shown, ", "))
     -- What is saved, and whether it can be bound
     for comboId, action in pairs(settings().replaced) do
         local inputId, layer = M.ParseReplacedKey(comboId)
@@ -2235,9 +2377,25 @@ function M:Init()
             cfg.action, cfg.cat = nil, nil
         end
     end
+    -- Wowf Tweaks' "/wowf x on" (an addon of this fork's author) put its own
+    -- button on X as a key binding: the wand action now, on the same layer
+    -- and page, in the profile in use and the character's others
+    local function wandFromWowf(replaced)
+        for key, action in pairs(type(replaced) == "table" and replaced or {}) do
+            if action == "cmd:CLICK WowfTweaksX:LeftButton" then replaced[key] = M.WAND end
+        end
+    end
+    wandFromWowf(settings().replaced)
+    local ok, profile = pcall(function() return CK.Profiles and CK.Profiles:Profile() end)
+    for _, set in ipairs(ok and type(profile) == "table" and type(profile.sets) == "table" and profile.sets or {}) do
+        if type(set) == "table" and type(set.data) == "table" then wandFromWowf(set.data.replaced) end
+    end
     local events = CreateFrame("Frame")
     events:RegisterEvent("PLAYER_ENTERING_WORLD")
     events:RegisterEvent("PLAYER_REGEN_ENABLED")
+    -- The wand worn or learned (the wand action's macros)
+    pcall(events.RegisterEvent, events, "PLAYER_EQUIPMENT_CHANGED")
+    pcall(events.RegisterEvent, events, "SPELLS_CHANGED")
     events:RegisterEvent("CVAR_UPDATE")
     -- A gamepad connected: the triggers' indexes the routers read
     pcall(events.RegisterEvent, events, "GAME_PAD_CONNECTED")
@@ -2247,6 +2405,10 @@ function M:Init()
     pcall(events.RegisterEvent, events, "UPDATE_SHAPESHIFT_FORMS")
     pcall(events.RegisterEvent, events, "UPDATE_BONUS_ACTIONBAR")
     events:SetScript("OnEvent", function(_, event, name)
+        if event == "PLAYER_EQUIPMENT_CHANGED" or event == "SPELLS_CHANGED" then
+            M:UpdateWands()
+            return
+        end
         if event == "UPDATE_BONUS_ACTIONBAR" then
             if CK.Config and CK.Config:IsOpen() and not InCombatLockdown() then CK.Config:Render() end
             return
@@ -2267,8 +2429,9 @@ function M:Init()
         C_Timer.After(event == "PLAYER_ENTERING_WORLD" and 1 or 0, function()
             if event == "PLAYER_REGEN_ENABLED" then
                 M:Repair()
-                -- A page's picture missing in the fight
+                -- A page's picture missing in the fight, a wand changed in it
                 if M.marksLater then M:UpdateMarks() end
+                if M.wandsLater then M:UpdateWands() end
             else
                 M:Apply()
             end

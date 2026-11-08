@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.19.4-zdaar.2
+
+- **Wand, else the game's button** (fork), a new action in the Gamepad tab's Game list, for any
+  replaced button, layer and page: with a live enemy targeted the wand shoots it; otherwise the
+  game's own button there is pressed and released as usual (on X: interact, tap or hold to loot). A
+  soft target the interact has just targeted is shot on the release. RB + the button stops the wand
+  while one is worn. It goes through the button's router like a spell, so it works in combat and
+  leaves the other layers and pages free (on X: P1 the wand, P2 a spell). The game's own picture
+  stays on the button. Replaces Wowf Tweaks' "/wowf x": its setting is turned into this action at
+  login.
+- **Page 2 and 3's pictures follow the page** (reported: turning to page 2 with another addon's key
+  left page 1's pictures up and drew none of page 2's). The page shown is now also watched every
+  tenth of a second, whatever turned it; /ec binds says which page the pictures are drawn for.
+
 ## 1.19.4-zdaar.1
 
 - **Replaced buttons per page** (fork): the game's gamepad bar has three pages, and until now a

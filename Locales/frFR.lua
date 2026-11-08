@@ -928,4 +928,6 @@ CK.LOCALES.frFR = {
     V_PAGE = "Page",
     V_SAME_PAGE1 = "Comme page 1",
     TOAST_SAME_AS_PAGE1 = "Page %d : de nouveau comme la page 1",
+    -- L'action baguette (Mapping.lua : The wand)
+    MAP_WAND = "Baguette, sinon le bouton du jeu",
 }
