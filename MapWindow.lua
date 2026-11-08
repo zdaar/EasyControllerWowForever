@@ -8,6 +8,9 @@ local L = CK.L
 -- (added, or replacing the game's), free, unavailable. A on a button opens
 -- the lists picker on the right. Under the controller: identify the back
 -- paddles, move the buttons, every replaced button given back to the game.
+-- Next to the layers, the game's bar pages (1, 2, 3): on page 2 and 3 the
+-- face buttons and the D-pad can do something else of their own, in the
+-- same places (Mapping.lua, Pages); what a page leaves alone is page 1's.
 -- What shows next to the bar (W.DisplayRows) is set in Home > Gamepad.
 local W = {}
 CK.MapPage = W
@@ -35,6 +38,9 @@ local NODES = {
     { "TR1", 282, 385, true }, { "TR2", 338, 385, true }, { "TR3", 394, 385, true }, { "TR4", 450, 385, true },
 }
 local TOUCH_SCALE = 0.8
+-- Where the pages' buttons start on the layers' row (4 layers of 1, 3
+-- pages of 0.42, 6 px apart)
+local PAGES_X = 346
 -- The D-pad's four sit on the drawn cross: no glyph of their own; square,
 -- like the game's gamepad bar draws them
 local NO_GLYPH = { UP = true, DOWN = true, LEFT = true, RIGHT = true }
@@ -62,7 +68,71 @@ end
 -- What a button is in a layer: { state = "native" | "slot" | "yours" |
 -- "free" | "off", name, icon, empty, slot, action, replaced, rep, why }
 ---------------------------------------------------------------------------
+-- A slot of the game's bar, on a page (what the game shows now: its own
+-- name and picture, the stance bar's in a stance)
+local function slotCell(input, layer, page)
+    local slot = M:PageSlot(input, layer, page)
+    local name, icon
+    if page == M:CurrentPage() then
+        name, icon = M:NativeInfo(input, layer)
+    else
+        name, icon = slot and P.SlotName(slot), slot and P.SlotTexture(slot)
+    end
+    local empty = not (slot and P.SlotTexture(slot))
+    return { state = "slot", name = empty and L.LBL_EMPTY or name or L.MAP_EMPTY_SLOT, icon = icon, empty = empty, slot = slot }
+end
+
+-- On the page picked: page 1 as before; page 2 and 3: their own, or page 1's
+-- (inherited, drawn dimmer)
 function W:Cell(input, layer)
+    local page = self.page or 1
+    if page == 1 then return self:BaseCell(input, layer) end
+    return self:PageCell(input, layer, page)
+end
+
+function W:PageCell(input, layer, page)
+    local base = self:BaseCell(input, layer)
+    -- Only the face buttons and the D-pad change with the page
+    if not M:Pageable(input) then
+        return { state = "off", name = base.name, icon = base.icon, why = base.why or L.MAP_PAGE_ALL }
+    end
+    if base.state == "off" or not M:Replaceable(input, layer) then
+        return { state = "off", name = base.name, icon = base.icon, why = base.why or L.MAP_PAGE_ALL }
+    end
+    -- A game function (a key binding) on one of its layers: every page
+    if M:PagesBlocked(input) then
+        return { state = "off", name = base.name, icon = base.icon, why = format(L.MAP_PAGE_BOUND, input.id) }
+    end
+    local own = M:GetPageReplaced(input.id, layer, page)
+    if own and own ~= M:NativeAction(input, layer) then
+        local cell = { name = M:ActionName(own), icon = M:ActionIcon(own), action = own, replaced = true, own = true,
+            rep = base.name or L.MAP_GAME }
+        if M:OwnKeys() then
+            cell.state = "yours"
+        else
+            cell.state, cell.why = "off", L.MAP_REPLACED_INACTIVE
+        end
+        return cell
+    end
+    -- The game's button there: its slot of this page (chosen for this page,
+    -- or page 1 leaves it to the game too)
+    if own or not base.replaced then
+        local cell
+        if M:State(input, layer) == "slot" then
+            cell = slotCell(input, layer, page)
+        else
+            local name, icon = M:NativeInfo(input, layer)
+            cell = { state = "native", name = name or L.MAP_GAME, icon = icon }
+        end
+        cell.own = own ~= nil
+        return cell
+    end
+    -- Page 1's replaced button
+    base.inherited = true
+    return base
+end
+
+function W:BaseCell(input, layer)
     -- The triggers: their bars' (alone), held in their own layers
     if input.layer then
         if layer == "" then
@@ -131,12 +201,7 @@ function W:Cell(input, layer)
         end
         return { state = "off", name = L.MAP_GAME, why = L.MAP_LOCKED }
     end
-    if state == "slot" then
-        local slot = M:NativeSlot(input, layer)
-        local name, icon = M:NativeInfo(input, layer)
-        local empty = not P.SlotTexture(slot)
-        return { state = "slot", name = empty and L.LBL_EMPTY or name, icon = icon, empty = empty, slot = slot }
-    end
+    if state == "slot" then return slotCell(input, layer, 1) end
     if state == "native" then
         local name, icon = M:NativeInfo(input, layer)
         return { state = "native", name = name or L.MAP_GAME, icon = icon }
@@ -336,7 +401,28 @@ function W:Build(parent)
         end)
         f.layers[i] = b
     end
-    K.LayoutRow(layersRow, f.layers, { 1, 1, 1, 1 }, 6)
+    -- The game's bar pages, after the layers
+    f.pages = {}
+    local row, flexes = {}, {}
+    for i, b in ipairs(f.layers) do row[i], flexes[i] = b, 1 end
+    for page = 1, M.PAGES do
+        local b = K.Button(layersRow, 15)
+        b.page = page
+        b.label:SetText(format(L.MAP_PAGE_SHORT, page))
+        b.focusBox = K.Box(b, 4, 2, "OVERLAY")
+        b.focusBox:SetPoints(b, -3)
+        b.focusBox:SetColors(nil, nil, KC.focus, 1)
+        b.focusBox:SetShown(false)
+        b:SetScript("OnClick", function()
+            if W.wizard or P:IsCapturing() then return end
+            C:Disarm()
+            W.page, W.zone = page, "pages"
+            C:Render()
+        end)
+        f.pages[page] = b
+        row[#row + 1], flexes[#flexes + 1] = b, 0.42
+    end
+    K.LayoutRow(layersRow, row, flexes, 6)
 
     -- The controller's silhouette (Claude Design, drawn at 2x: 960 x 688 of 1024)
     local area = CK.NewFrame("Frame", nil, zone)
@@ -437,7 +523,7 @@ slotEvents:SetScript("OnEvent", function() W.slotsChanged = true end)
 -- Opened on A, alone; back from placing the bar (resume), as it was
 function W:Show(resume)
     if not resume then
-        self.zone, self.node, self.layer, self.act = "pad", "A", "", 1
+        self.zone, self.node, self.layer, self.act, self.page = "pad", "A", "", 1, 1
         self.wizard, self.assign = nil, nil
         if P:IsCapturing() then P:StopCapture(nil) end
         self.picker:Close()
@@ -498,8 +584,10 @@ function W:RenderNode(node, layer)
         look.hatch = true
     end
     node.slot:SetLook(look)
-    node:SetAlpha(st == "off" and 0.45 or 1)
-    node.label:SetAlpha(st == "off" and 0.45 or 1)
+    -- (page 1's, on another page: dimmer)
+    local alpha = st == "off" and 0.45 or (cell.inherited and 0.6) or 1
+    node:SetAlpha(alpha)
+    node.label:SetAlpha(alpha)
     if node.glyph.none then
         node.glyph:Hide()
     else
@@ -530,6 +618,11 @@ function W:Render()
             b.glyphs:ClearAllPoints()
             b.glyphs:SetPoint("CENTER", b, "CENTER", 0, 0)
         end
+    end
+    for _, b in ipairs(f.pages) do
+        local active = b.page == (self.page or 1)
+        b:SetState({ active = active })
+        b.focusBox:SetShown(self.zone == "pages" and active and not self.picker:IsOpen())
     end
     self:LayoutPad()
     for _, node in pairs(f.nodes) do
@@ -585,6 +678,7 @@ end
 
 function W:Detail(layer)
     if self.zone == "layers" then return { title = L.LBL_LAYERS, body = L.TIP_LAYERS } end
+    if self.zone == "pages" then return { title = L.LBL_PAGES, body = L.TIP_PAGES } end
     if self.zone == "actions" then
         local n = M:ReplacedCount()
         local list = {
@@ -619,6 +713,15 @@ function W:Detail(layer)
     else
         body = cell.why
     end
+    -- Page 2, 3: its own, or page 1's
+    local page = self.page or 1
+    if page > 1 and st ~= "off" then
+        if cell.own then
+            body = st == "yours" and format(L.MAP_PAGE_OWN, page, cell.rep) or format(L.MAP_PAGE_GAME, page)
+        elseif cell.inherited then
+            body = format(L.MAP_PAGE_SAME, page)
+        end
+    end
     -- A shared key (the trigger no modifier): spells, items and macros
     if input.paddle and (st == "free" or st == "yours") and M:PaddleTabs(input, layer) == M.SHARED_TABS then
         body = body .. "\n\n" .. L.MAP_SHARED_HINT
@@ -646,6 +749,7 @@ function W:Crumb()
     -- The character's profile being set, when it has more than one
     local profile = #CK.Profiles:Sets() > 1 and select(2, CK.Profiles:ActiveSet())
     return L.TAB_GAMEPAD .. (profile and (" › " .. profile) or "") .. " › " .. name
+        .. " · " .. format(L.MAP_PAGE_N, self.page or 1)
 end
 
 function W:Help()
@@ -660,6 +764,9 @@ function W:Help()
     if self.zone == "layers" then
         return { H({ "DPAD_LR" }, L.V_LAYER, "RIGHT"), H({ "DPAD" }, L.V_BUTTONS, "DOWN"), tab, H({ "B" }, L.V_CLOSE, "B") }
     end
+    if self.zone == "pages" then
+        return { H({ "DPAD_LR" }, L.V_PAGE, "RIGHT"), H({ "DPAD" }, L.V_BUTTONS, "DOWN"), tab, H({ "B" }, L.V_CLOSE, "B") }
+    end
     if self.zone == "actions" then
         return { H({ "DPAD" }, L.V_MOVE), H({ "A" }, L.V_SELECT, "A"), tab, H({ "B" }, L.V_BACK, "B") }
     end
@@ -670,7 +777,7 @@ function W:Help()
     local state = input and M:State(input, layer)
     local replace = input and M:Replaceable(input, layer) and M:CanOwnKeys()
     local canA = state == "free" or replace
-        or (state == "slot" and not M:SlotKept(M:NativeSlot(input, layer)))
+        or (state == "slot" and not M:SlotKept(M:PageSlot(input, layer, self.page or 1)))
     if cell.lockedAlone then
         hints[#hints + 1] = H({ "A" }, L.V_UNLOCK, "A")
     elseif cell.state == "off" and cell.why then
@@ -678,7 +785,11 @@ function W:Help()
     elseif cell.pick or (cell.state ~= "off" and input and canA) then
         hints[#hints + 1] = H({ "A" }, cell.state == "free" and L.V_ASSIGN or L.V_CHANGE, "A")
     end
-    if cell.replaced then
+    if cell.own then
+        hints[#hints + 1] = H({ "X" }, L.V_SAME_PAGE1, "X")
+    elseif cell.inherited then
+        -- (page 1's: changed on page 1)
+    elseif cell.replaced then
         hints[#hints + 1] = H({ "X" }, L.V_GIVE_BACK, "X")
     elseif cell.state == "slot" and not cell.empty and not M:SlotKept(cell.slot) then
         hints[#hints + 1] = H({ "X" }, L.V_EMPTY, "X")
@@ -725,22 +836,33 @@ end
 -- What a choice does: a spell, an item or a macro goes in a slot of the
 -- game's bar (like the game's own editor); anything else replaces the
 -- game's button; a free button takes it
+-- On page 2 and 3: in that page's slot of the game (the game's button there
+-- again, page 1 replacing it), else that page's own
 function W:Put(input, layer, action)
+    local page = self.page or 1
     local state = M:State(input, layer)
     local kind = action:match("^(%a+):")
+    if page > 1 and not M:Pageable(input) then return false end
     if state == "slot" then
-        local slot = M:NativeSlot(input, layer)
-        if SLOT_KINDS[kind] and not M:SlotKept(slot) then
+        local slot = M:PageSlot(input, layer, page)
+        if SLOT_KINDS[kind] and slot and not M:SlotKept(slot) then
             if not M:PlaceInSlot(slot, action) then return false end
-            if M:GetReplaced(input.id, layer) then M:SetReplaced(input.id, layer, nil) end
+            if page > 1 then
+                M:SetReplaced(input.id, layer, M:NativeAction(input, layer), page)
+            elseif M:GetReplaced(input.id, layer) then
+                M:SetReplaced(input.id, layer, nil)
+            end
             return true
         end
     end
     if state == "slot" or state == "native" then
         if not (M:Replaceable(input, layer) and M:CanOwnKeys()) then return false end
-        M:SetReplaced(input.id, layer, action)
+        -- A page's own: never a game function (a key binding)
+        if page > 1 and M.IsBoundAction(action) then return false end
+        M:SetReplaced(input.id, layer, action, page > 1 and page or nil)
         return true
     end
+    if page > 1 then return false end
     if state == "free" then
         M:Set(input.id, layer, action)
         return true
@@ -833,10 +955,11 @@ function W:ChooseIn(input, layer)
         return
     end
     local state = M:State(input, layer)
+    local page = self.page or 1
     local replace = M:Replaceable(input, layer) and M:CanOwnKeys()
     local tabs, forSlot, slot
     if state == "slot" then
-        slot = M:NativeSlot(input, layer)
+        slot = M:PageSlot(input, layer, page)
         local kept = M:SlotKept(slot)
         if kept and not replace then
             if UIErrorsFrame then UIErrorsFrame:AddMessage(kept, 1, 0.1, 0.1) end
@@ -852,10 +975,12 @@ function W:ChooseIn(input, layer)
         if UIErrorsFrame and M:Replaceable(input, layer) then UIErrorsFrame:AddMessage(L.MAP_REPLACE_NO_MOD, 1, 0.1, 0.1) end
         return
     end
-    local current = (replace and M:GetReplaced(input.id, layer)) or (slot and M:SlotAction(slot)) or M:Get(input.id, layer)
+    local current = (replace and (page > 1 and M:ReplacedOn(input.id, layer, page) or M:GetReplaced(input.id, layer)))
+        or (slot and M:SlotAction(slot)) or M:Get(input.id, layer)
     local lists = {}
     for _, tab in ipairs(tabs) do
-        local noBound = layer ~= "" and not input.paddle
+        -- (a page's own: never a game function, a binding is every page's)
+        local noBound = (layer ~= "" and not input.paddle) or page > 1
         lists[#lists + 1] = { key = tab, label = L["MAP_TAB_" .. tab:upper()], entries = function() return M:Catalog(tab, forSlot, noBound) end }
     end
     local name = cell.name or L.MAP_FREE
@@ -889,7 +1014,12 @@ function W:Clear()
     if not input or CK:BlockedByCombat() then return end
     local layer = self:ViewLayer()
     local cell = self:Cell(input, layer)
-    if cell.replaced then
+    if cell.own then
+        M:SetReplaced(input.id, layer, nil, self.page)
+        C:Toast(format(L.TOAST_SAME_AS_PAGE1, self.page))
+    elseif cell.inherited then
+        return
+    elseif cell.replaced then
         M:SetReplaced(input.id, layer, nil)
         C:Toast(L.TOAST_GIVEN_BACK)
     elseif cell.state == "slot" and not cell.empty then
@@ -1026,8 +1156,34 @@ function W:Press(name)
             for i, layer in ipairs(M.LAYERS) do
                 if layer == self.layer then index = i end
             end
-            index = math.max(1, math.min(#M.LAYERS, index + (name == "LEFT" and -1 or 1)))
-            self.layer = M.LAYERS[index]
+            index = index + (name == "LEFT" and -1 or 1)
+            -- Past the last layer: the pages, on the same row
+            if index > #M.LAYERS then
+                self.zone = "pages"
+            else
+                self.layer = M.LAYERS[math.max(1, index)]
+            end
+        elseif name == "DOWN" or name == "A" then
+            self.zone = "pad"
+        elseif name == "B" then
+            if self.assign then
+                self.assign = nil
+            else
+                return false
+            end
+        end
+        C:Render()
+        return true
+    end
+    if self.zone == "pages" then
+        if name == "LEFT" or name == "RIGHT" then
+            local page = (self.page or 1) + (name == "LEFT" and -1 or 1)
+            -- Before page 1: the layers
+            if page < 1 then
+                self.zone = "layers"
+            else
+                self.page = math.min(M.PAGES, page)
+            end
         elseif name == "DOWN" or name == "A" then
             self.zone = "pad"
         elseif name == "B" then
@@ -1057,7 +1213,8 @@ function W:Press(name)
         if to then
             self.node = to
         elseif name == "UP" then
-            self.zone = "layers"
+            -- Under the pages (RT): up to them
+            self.zone = POS[self.node] and POS[self.node][2] >= PAGES_X and "pages" or "layers"
         elseif name == "DOWN" and not self.assign then
             self.zone = "actions"
         end

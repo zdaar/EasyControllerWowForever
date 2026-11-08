@@ -585,7 +585,7 @@ function T:DrawActive(layer, bar)
             local over = P:LiveButton("bar:" .. which .. ":" .. key)
             if over and over:IsVisible() then
                 local input = byBar()[key]
-                local action = input and CK.Mapping:GetReplaced(input.id, l) or ("bar:" .. which .. ":" .. key)
+                local action = input and CK.Mapping:ReplacedOn(input.id, l, CK.Mapping:CurrentPage()) or ("bar:" .. which .. ":" .. key)
                 place(s, over, to)
                 paint(s, over, action, true)
                 self:HideGame(over, keep)
@@ -719,7 +719,7 @@ function T:Draw()
     for key, s in pairs(v.slots) do
         local over = P:NativeButton("bar:top:" .. key)
         local input = byBar()[key]
-        local action = input and CK.Mapping:GetReplaced(input.id, layer) or ("bar:" .. bar .. ":" .. key)
+        local action = input and CK.Mapping:ReplacedOn(input.id, layer, CK.Mapping:CurrentPage()) or ("bar:" .. bar .. ":" .. key)
         if over and over:IsVisible() then
             s:ClearAllPoints()
             s:SetAllPoints(iconArea(over))

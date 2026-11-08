@@ -559,6 +559,130 @@ function M:GetReplaced(inputId, layer)
     return self:ReplaceOn() and settings().replaced[inputId .. ":" .. layer] or nil
 end
 
+---------------------------------------------------------------------------
+-- Pages: the game's gamepad bar has three pages (its page key). Its own
+-- slots change with the page; a replaced button was the same on all three.
+-- The face buttons and the D-pad can now be replaced page by page, each
+-- button where it is on the pad, so the same layout gives other actions
+-- on another page. Page 1 is the replaced buttons as before
+-- (settings.replaced["A:LT"]); page 2 and 3 keep only what differs, in the
+-- same table ("A:LT@2"): a button with nothing of its own on a page does
+-- what it does on page 1 (one layout learned, a few buttons changed). The
+-- game's own button chosen there is kept ("bar:left:a": its slot of that
+-- page) while page 1 replaces it. Same table: the profiles, the Restore
+-- button, a wheel deleted and the spells of another character take them
+-- along with the rest.
+--
+-- In combat the page changes and nothing can be bound: the button's router
+-- reads the page on each press (ROUTE), from the game's top D-pad button.
+-- Turning the page, the game gives its bar buttons the storage id of that
+-- page's slot (SetID, GamepadActionBarStandardButtonMixin:
+-- UpdatePageableGamepadButtonAction); a restricted snippet may read the id
+-- of a protected button in combat (RELAY_SLOT reads it too). The ids of
+-- the three pages are written on the router out of combat.
+---------------------------------------------------------------------------
+local GPC = Constants and Constants.GamepadActionBarConstants
+M.PAGES = GPC and GPC.NUM_STANDARD_PAGES_PER_GAMEPAD_ACTION_BAR_PAGE_UNIT or 3
+-- The button whose id says the page (never one of the game's reserved ones)
+local PAGE_REF = "bar:top:up"
+
+function M.ReplacedKey(inputId, layer, page)
+    if page and page > 1 then return inputId .. ":" .. layer .. "@" .. page end
+    return inputId .. ":" .. layer
+end
+
+-- "A:LT@2" -> "A", "LT", 2; "A:LT" -> "A", "LT", 1
+function M.ParseReplacedKey(key)
+    if type(key) ~= "string" then return nil end
+    local inputId, layer, page = key:match("^(%w+):(%a*)@(%d+)$")
+    if inputId then return inputId, layer, tonumber(page) end
+    inputId, layer = key:match("^(%w+):(%a*)$")
+    if inputId then return inputId, layer, 1 end
+end
+
+-- The buttons that can differ by page: the face buttons and the D-pad (the
+-- game's bar buttons, which a router can always press)
+function M:Pageable(input)
+    return input and input.bar and not input.paddle and true or false
+end
+
+-- What a page itself puts on a button (nil: the same as page 1)
+function M:GetPageReplaced(inputId, layer, page)
+    if not (page and page > 1) then return self:GetReplaced(inputId, layer) end
+    return self:ReplaceOn() and settings().replaced[M.ReplacedKey(inputId, layer, page)] or nil
+end
+
+-- What a button runs on a page: its page's, else page 1's; nil when that is
+-- the game's own button
+function M:ReplacedOn(inputId, layer, page)
+    local action = page and page > 1 and self:GetPageReplaced(inputId, layer, page) or self:GetReplaced(inputId, layer)
+    local input = M.BY_ID[inputId]
+    if action and input and action == self:NativeAction(input, layer) then return nil end
+    return action
+end
+
+-- A page with buttons of its own
+function M:PageHasOwn(page)
+    if not (page and page > 1) then return false end
+    for key in pairs(settings().replaced) do
+        if select(3, M.ParseReplacedKey(key)) == page then return true end
+    end
+    return false
+end
+
+-- A game function bound on one of the button's layers (its key binding): a
+-- binding is the same on every page, the button's pages can't differ
+function M:PagesBlocked(input)
+    for _, layer in ipairs(M.LAYERS) do
+        if bound(self:GetReplaced(input.id, layer)) then return true end
+    end
+    return false
+end
+
+-- The game's page shown now (1 to 3). On its special page (a vehicle, a
+-- possessed unit's bar) its buttons keep the last page's ids: that page
+function M:CurrentPage()
+    local unit = GamepadMainActionBarFrame and GamepadMainActionBarFrame.PageUnit
+    local tracker = unit and unit.PageTracker
+    local page = tracker and tonumber(tracker.currentPage) or 1
+    if page >= 1 and page <= M.PAGES then self.lastPage = page end
+    return self.lastPage or 1
+end
+
+-- The game's slot of a page for a button's layer (nil: no slot there, A /
+-- B / X / Y alone). The page shown now: the slot the game shows (the
+-- stance bar's in a stance)
+local function storageSlot(page, unitSlotId)
+    local util = GamepadActionBarBindingUtil
+    local get = util and util.GetGamepadStorageSlotIndexFromPageAndPageUnitSlotID
+    if not (get and unitSlotId) then return nil end
+    local ok, slot = pcall(get, page, unitSlotId)
+    return ok and type(slot) == "number" and slot > 0 and slot or nil
+end
+
+function M:PageSlot(input, layer, page)
+    if not page or page == self:CurrentPage() then return self:NativeSlot(input, layer) end
+    if not self:NativeSlot(input, layer) then return nil end
+    local native = self:NativeBarButton(input, layer)
+    local id = native and native.GetGamepadPageUnitSlotID and native:GetGamepadPageUnitSlotID()
+    return storageSlot(page, id)
+end
+
+-- The page reader's button and its id on each page (nil: the game's bar
+-- not there, or a build that pages another way: page 1 everywhere)
+function M:PageIds()
+    local ref = CK.Paddles:NativeButton(PAGE_REF)
+    local unitSlotId = ref and ref.GetGamepadPageUnitSlotID and ref:GetGamepadPageUnitSlotID()
+    if not unitSlotId then return nil end
+    local ids, seen = {}, {}
+    for page = 1, M.PAGES do
+        local id = storageSlot(page, unitSlotId)
+        if not id or seen[id] then return nil end
+        ids[page], seen[id] = id, true
+    end
+    return ref, ids
+end
+
 -- Bound now: the option on, the button the game's, a key of its own
 function M:ReplacedActive(input, layer)
     return self:GetReplaced(input.id, layer) ~= nil and self:OwnKeys() and self:Replaceable(input, layer)
@@ -572,12 +696,23 @@ function M:NativeAction(input, layer)
     return command and not command:find("^CLICK ") and ("cmd:" .. command) or nil
 end
 
-function M:SetReplaced(inputId, layer, action)
+-- page: 2 or 3 for that page's own (nil: page 1, the replaced buttons
+-- as before)
+function M:SetReplaced(inputId, layer, action, page)
     if M.SYSTEM[inputId] then return end
-    -- The game's own function chosen: the button given back to it
     local input = M.BY_ID[inputId]
-    if action and input and action == self:NativeAction(input, layer) then action = nil end
-    settings().replaced[inputId .. ":" .. layer] = action
+    if page and page > 1 then
+        if not self:Pageable(input) then return end
+        -- The game's own on that page: kept only while page 1 replaces it
+        -- (else the same as page 1 already); never a key binding
+        if action and bound(action) then return end
+        if action and action == self:NativeAction(input, layer) and not self:GetReplaced(inputId, layer) then action = nil end
+        settings().replaced[M.ReplacedKey(inputId, layer, page)] = action
+    else
+        -- The game's own function chosen: the button given back to it
+        if action and input and action == self:NativeAction(input, layer) then action = nil end
+        settings().replaced[inputId .. ":" .. layer] = action
+    end
     if action then
         for _, t in ipairs(TRIGGERS) do
             if not self:TriggerModifier(t) then self:SetTriggerModifier(t, true) end
@@ -1157,31 +1292,46 @@ local ROUTE = [[
     end
     -- The trigger toggle on (Toggle.lua): its layer, held or toggled; a
     -- trigger held was used
+    local layer
     local toggle = self:GetFrameRef("toggle")
     if toggle then
         if toggle:GetAttribute("ck-held-LT") then toggle:SetAttribute("ck-used-LT", true) end
         if toggle:GetAttribute("ck-held-RT") then toggle:SetAttribute("ck-used-RT", true) end
-        local on = toggle:GetAttribute("ck-layer") or ""
-        if not self:GetAttribute("ck-has-" .. on) then return false end
-        self:SetAttribute("ck-pressed", on)
-        return "ck" .. on
+        layer = toggle:GetAttribute("ck-layer") or ""
+    else
+        local state = GetGamePadState()
+        local pad = state and state.buttons
+        local came = button or ""
+        local shift = strfind(came, "S", 3, true) or IsShiftKeyDown()
+        local ctrl = strfind(came, "C", 3, true) or IsControlKeyDown()
+        local alt = strfind(came, "A", 3, true) or IsAltKeyDown()
+        local lt, rt = self:GetAttribute("ck-lt"), self:GetAttribute("ck-rt")
+        local ltMod, rtMod = self:GetAttribute("ck-lt-mod"), self:GetAttribute("ck-rt-mod")
+        local ltDown = (pad and lt and pad[lt]) or (ltMod == "SHIFT" and shift)
+            or (ltMod == "CTRL" and ctrl) or (ltMod == "ALT" and alt)
+        local rtDown = (pad and rt and pad[rt]) or (rtMod == "SHIFT" and shift)
+            or (rtMod == "CTRL" and ctrl) or (rtMod == "ALT" and alt)
+        layer = (ltDown and "LT" or "") .. (rtDown and "RT" or "")
     end
-    local state = GetGamePadState()
-    local pad = state and state.buttons
-    local came = button or ""
-    local shift = strfind(came, "S", 3, true) or IsShiftKeyDown()
-    local ctrl = strfind(came, "C", 3, true) or IsControlKeyDown()
-    local alt = strfind(came, "A", 3, true) or IsAltKeyDown()
-    local lt, rt = self:GetAttribute("ck-lt"), self:GetAttribute("ck-rt")
-    local ltMod, rtMod = self:GetAttribute("ck-lt-mod"), self:GetAttribute("ck-rt-mod")
-    local ltDown = (pad and lt and pad[lt]) or (ltMod == "SHIFT" and shift)
-        or (ltMod == "CTRL" and ctrl) or (ltMod == "ALT" and alt)
-    local rtDown = (pad and rt and pad[rt]) or (rtMod == "SHIFT" and shift)
-        or (rtMod == "CTRL" and ctrl) or (rtMod == "ALT" and alt)
-    local layer = (ltDown and "LT" or "") .. (rtDown and "RT" or "")
-    if not self:GetAttribute("ck-has-" .. layer) then return false end
-    self:SetAttribute("ck-pressed", layer)
-    return "ck" .. layer
+    -- The game's bar page (Pages, above): the id its top D-pad button has
+    -- now. A page with its own on this layer runs it ("none": Nothing
+    -- there), else page 1's
+    local key = layer
+    local pages = self:GetAttribute("ck-pages")
+    local ref = pages and self:GetFrameRef("ck-page")
+    if ref then
+        local id = ref:GetID()
+        for p = 2, pages do
+            if id == self:GetAttribute("ck-page-id" .. p) then
+                local own = self:GetAttribute("ck-has-" .. layer .. "p" .. p)
+                if own == "none" then return false end
+                if own then key = layer .. "p" .. p end
+            end
+        end
+    end
+    if not self:GetAttribute("ck-has-" .. key) then return false end
+    self:SetAttribute("ck-pressed", key)
+    return "ck" .. key
 ]]
 
 local header
@@ -1465,6 +1615,8 @@ end
 -- { native = the game's button }, nothing for a layer left empty. Nil when
 -- the button has nothing of ours, or a layer only a key binding runs.
 -- Second value: a replaced button of the game (bound with priority).
+-- Third: what pages 2 and 3 run of their own, { [2] = { LT = target } }
+-- ({ none = true }: Nothing on that page), nil when no page has any.
 function M:PadTargets(input)
     if input.layer or input.paddle or not self:InputKey(input) then return nil end
     local targets, ours, replaced = {}, false, false
@@ -1504,16 +1656,62 @@ function M:PadTargets(input)
             if action then ours, replaced = true, replaced or isReplaced end
         end
     end
+    -- The pages' own (Pages): actions a router clicks, never a binding
+    local pages
+    if replaceOn and self:Pageable(input) and self:PageIds() then
+        for page = 2, M.PAGES do
+            for _, layer in ipairs(M.LAYERS) do
+                local action = self:Combo(input, layer) and self:Replaceable(input, layer)
+                    and self:GetPageReplaced(input.id, layer, page)
+                local target
+                if action == M.NOTHING then
+                    target = { none = true }
+                elseif M.Routable(action) then
+                    target = { action = action }
+                elseif action and action:find("^bar:") and CK.Paddles:NativeButton(action) then
+                    target = { bar = action }
+                end
+                if target then
+                    pages = pages or {}
+                    pages[page] = pages[page] or {}
+                    pages[page][layer] = target
+                    ours, replaced = true, true
+                end
+            end
+        end
+    end
     if not ours then return nil end
     -- A trigger that is no modifier: its layer shares the key of the one
     -- without it, and what it runs (as before)
     for _, layer in ipairs(M.LAYERS) do
-        if not self:Combo(input, layer) then targets[layer] = targets[self:SharedLayers(layer)[1]] end
+        if not self:Combo(input, layer) then
+            local shared = self:SharedLayers(layer)[1]
+            targets[layer] = targets[shared]
+            for _, own in pairs(pages or {}) do own[layer] = own[shared] end
+        end
     end
-    return targets, replaced
+    return targets, replaced, pages
 end
 
-function M:ApplyPad(input, targets, replaced)
+-- A layer's target on a router: its button ("*clickbutton-ck<key>"), and
+-- its release for a wheel; key is the layer, or the layer and its page
+-- ("LTp2")
+local function setTarget(r, input, key, comboId, t)
+    local b
+    if t and t.action then
+        b = t.action:find("^wheel:") and CK.ConsumableWheel:Toggle(t.action:match("^wheel:(.+)$"), comboId)
+            or actionButton(comboId, t.action)
+        -- Clicked by the key's button, once per press
+        b:SetAttribute("useOnKeyDown", false)
+    elseif t and t.bar then
+        b = relay(t.bar)
+    end
+    r:SetAttribute("*clickbutton-ck" .. key, b)
+    r:SetAttribute("ck-has-" .. key, b and true or (t and t.none and "none") or nil)
+    setRelease(r, key, b, t and t.action)
+end
+
+function M:ApplyPad(input, targets, replaced, pages)
     local key = self:InputKey(input)
     local r = router(input.id)
     r.ckInput = input.id
@@ -1526,22 +1724,21 @@ function M:ApplyPad(input, targets, replaced)
     r:SetAttribute("ck-lt-mod", M:TriggerModifier("PADLTRIGGER"))
     r:SetAttribute("ck-rt-mod", M:TriggerModifier("PADRTRIGGER"))
     for _, layer in ipairs(M.LAYERS) do
-        r:SetAttribute("ck-has-" .. layer, nil)
-        r:SetAttribute("*clickbutton-ck" .. layer, nil)
-        local t, b = targets[layer], nil
-        if t and t.action then
-            b = t.action:find("^wheel:") and CK.ConsumableWheel:Toggle(t.action:match("^wheel:(.+)$"), input.id .. ":" .. layer)
-                or actionButton(input.id .. ":" .. layer, t.action)
-            -- Clicked by the key's button, once per press
-            b:SetAttribute("useOnKeyDown", false)
-        elseif t and t.bar then
-            b = relay(t.bar)
+        local t = targets[layer]
+        -- (Nothing on page 1: nothing, as before)
+        setTarget(r, input, layer, input.id .. ":" .. layer, not (t and t.none) and t or nil)
+    end
+    -- The pages' own, and what the router reads the page from
+    local ref, ids = nil, nil
+    if pages then ref, ids = self:PageIds() end
+    r:SetAttribute("ck-pages", ref and M.PAGES or nil)
+    setRef(r, "ck-page", ref)
+    for page = 2, M.PAGES do
+        r:SetAttribute("ck-page-id" .. page, ids and ids[page] or nil)
+        for _, layer in ipairs(M.LAYERS) do
+            local own = ref and pages[page] and pages[page][layer]
+            setTarget(r, input, layer .. "p" .. page, M.ReplacedKey(input.id, layer, page), own)
         end
-        if b then
-            r:SetAttribute("*clickbutton-ck" .. layer, b)
-            r:SetAttribute("ck-has-" .. layer, true)
-        end
-        setRelease(r, layer, b, t and t.action)
     end
     local o, record = owner, self.bound
     if replaced then o, record = takeOwner, self.taken end
@@ -1592,7 +1789,29 @@ function M:CoreActive()
     return not (CK.Config and CK.Config:IsOpen())
 end
 
+-- The game's page turned (its page key, in combat too): the pictures of
+-- that page's own. The router needs nothing: it reads the page on each
+-- press. A hook after the game's own function, a frame later: the game's
+-- paging never runs our code.
+function M:HookPages()
+    local unit = GamepadMainActionBarFrame and GamepadMainActionBarFrame.PageUnit
+    if self.pagesHooked or not (unit and unit.SetCurrentPage) then return end
+    self.pagesHooked = true
+    hooksecurefunc(unit, "SetCurrentPage", function()
+        C_Timer.After(0, function() M:OnPageChanged() end)
+    end)
+end
+
+function M:OnPageChanged()
+    local page = self:CurrentPage()
+    if page == self.shownPage then return end
+    self.shownPage = page
+    self:UpdateMarks()
+    if CK.Config and CK.Config:IsOpen() and not InCombatLockdown() then CK.Config:Render() end
+end
+
 function M:Apply()
+    self:HookPages()
     if InCombatLockdown() or not self:CoreActive() then
         self.pending = true
         -- A menu of the game, or our panel: its buttons back to it
@@ -1610,10 +1829,10 @@ function M:Apply()
     if self:Enabled() then
         -- The pad's buttons with something of ours: their routers
         for _, input in ipairs(M.INPUTS) do
-            local targets, replaced = self:PadTargets(input)
+            local targets, replaced, pages = self:PadTargets(input)
             if targets then
                 self.padRouted[input.id] = true
-                self:ApplyPad(input, targets, replaced)
+                self:ApplyPad(input, targets, replaced, pages)
             end
         end
         for comboId, action in pairs(settings().mapping) do
@@ -1846,14 +2065,59 @@ local function shapeMark(mark, square)
     mark.icon:AddMaskTexture(mark[key][2])
     mark.square = square
 end
+local function newMark(native)
+    -- An opaque round hides the game's picture, inside its ring
+    local mark = CK.NewFrame("Frame", nil, native)
+    mark:SetAllPoints(native.icon or native)
+    mark.bg = mark:CreateTexture(nil, "ARTWORK")
+    mark.bg:SetPoint("TOPLEFT", 3, -3)
+    mark.bg:SetPoint("BOTTOMRIGHT", -3, 3)
+    mark.bg:SetColorTexture(0.04, 0.04, 0.04, 1)
+    mark.icon = mark:CreateTexture(nil, "OVERLAY")
+    -- The round the picture shows through
+    mark.round = { mark.bg, CK.NewFrame("Frame", nil, mark) }
+    mark.round[2]:SetPoint("TOPLEFT", 6, -6)
+    mark.round[2]:SetPoint("BOTTOMRIGHT", -6, 6)
+    mark:Hide()
+    marks[native] = mark
+    return mark
+end
+
+-- The page shown now's (Pages): set again when the game turns the page, in
+-- combat too. Out of combat the pictures of every page's own are made
+-- ahead (hidden), so a page turned in a fight finds them.
 function M:UpdateMarks()
+    if not InCombatLockdown() and self:ReplaceOn() and self:OwnKeys() then
+        self.marksLater = nil
+        for comboId in pairs(settings().replaced) do
+            local inputId, layer, onPage = M.ParseReplacedKey(comboId)
+            local input = inputId and onPage > 1 and self.padRouted[inputId] and M.BY_ID[inputId]
+            local native = input and self:Replaceable(input, layer) and self:NativeBarButton(input, layer)
+            if native and not marks[native] then newMark(native) end
+        end
+    end
     local wanted = {}
     if self:ReplaceOn() and self:OwnKeys() then
+        local page = self:CurrentPage()
         for comboId, action in pairs(settings().replaced) do
-            local inputId, layer = comboId:match("^(%w+):(%a*)$")
+            local inputId, layer, onPage = M.ParseReplacedKey(comboId)
             local input = inputId and M.BY_ID[inputId]
-            local native = input and self:Replaceable(input, layer) and self:NativeBarButton(input, layer)
-            if native then wanted[native] = action end
+            local native = input and onPage == 1 and self:Replaceable(input, layer) and self:NativeBarButton(input, layer)
+            if native then
+                -- That page's own, on a button its router runs
+                if page > 1 and self.padRouted[inputId] then action = self:ReplacedOn(inputId, layer, page) end
+                wanted[native] = action
+            end
+        end
+        if page > 1 then
+            for _, input in ipairs(M.INPUTS) do
+                for _, layer in ipairs(M.LAYERS) do
+                    local own = self.padRouted[input.id] and self:Replaceable(input, layer)
+                        and self:ReplacedOn(input.id, layer, page)
+                    local native = own and self:NativeBarButton(input, layer)
+                    if native then wanted[native] = own end
+                end
+            end
         end
     end
     for native, mark in pairs(marks) do
@@ -1861,36 +2125,28 @@ function M:UpdateMarks()
     end
     for native, action in pairs(wanted) do
         local mark = marks[native]
-        if not mark then
-            -- An opaque round hides the game's picture, inside its ring
-            mark = CK.NewFrame("Frame", nil, native)
-            mark:SetAllPoints(native.icon or native)
-            mark.bg = mark:CreateTexture(nil, "ARTWORK")
-            mark.bg:SetPoint("TOPLEFT", 3, -3)
-            mark.bg:SetPoint("BOTTOMRIGHT", -3, 3)
-            mark.bg:SetColorTexture(0.04, 0.04, 0.04, 1)
-            mark.icon = mark:CreateTexture(nil, "OVERLAY")
-            -- The round the picture shows through
-            mark.round = { mark.bg, CK.NewFrame("Frame", nil, mark) }
-            mark.round[2]:SetPoint("TOPLEFT", 6, -6)
-            mark.round[2]:SetPoint("BOTTOMRIGHT", -6, 6)
-            marks[native] = mark
+        if not mark and InCombatLockdown() then
+            self.marksLater = true
+        elseif not mark then
+            mark = newMark(native)
         end
-        local square = isSquare(native)
-        shapeMark(mark, square)
-        mark:SetFrameLevel(native:GetFrameLevel() + 3)
-        local icon = self:ActionIcon(action)
-        -- (what it shows: Range.lua turns a spell out of range red)
-        mark.action = action
-        -- The game's own pictures (jump, ping...) come with their ring:
-        -- larger than the round, it stays outside. Square: the icon fills
-        -- the game's square, as its own icons do
-        local zoom = type(icon) == "table" and icon.atlas and -2 or (square and 3 or 6)
-        mark.icon:ClearAllPoints()
-        mark.icon:SetPoint("TOPLEFT", zoom, -zoom)
-        mark.icon:SetPoint("BOTTOMRIGHT", -zoom, zoom)
-        CK.Paddles.SetIcon(mark.icon, icon)
-        mark:Show()
+        if mark then
+            local square = isSquare(native)
+            shapeMark(mark, square)
+            mark:SetFrameLevel(native:GetFrameLevel() + 3)
+            local icon = self:ActionIcon(action)
+            -- (what it shows: Range.lua turns a spell out of range red)
+            mark.action = action
+            -- The game's own pictures (jump, ping...) come with their ring:
+            -- larger than the round, it stays outside. Square: the icon fills
+            -- the game's square, as its own icons do
+            local zoom = type(icon) == "table" and icon.atlas and -2 or (square and 3 or 6)
+            mark.icon:ClearAllPoints()
+            mark.icon:SetPoint("TOPLEFT", zoom, -zoom)
+            mark.icon:SetPoint("BOTTOMRIGHT", -zoom, zoom)
+            CK.Paddles.SetIcon(mark.icon, icon)
+            mark:Show()
+        end
     end
 end
 
@@ -1901,9 +2157,13 @@ function M:Diagnose()
     CK:Print(format(L.REPLACE_DIAG, tostring(self:ReplaceOn()), tostring(self:OwnKeys()),
         tostring(InCombatLockdown()), tostring(self:CoreActive()))
         .. format(" | pending %s, game sets %s", tostring(self.pending), stack and #stack or "?"))
+    -- The game's page, and the ids the routers read it from (Pages)
+    local ref, ids = self:PageIds()
+    DEFAULT_CHAT_FRAME:AddMessage(format("  page %d, id now %s, page ids %s", self:CurrentPage(),
+        tostring(ref and ref:GetID()), ids and table.concat(ids, " / ") or "none"))
     -- What is saved, and whether it can be bound
     for comboId, action in pairs(settings().replaced) do
-        local inputId, layer = comboId:match("^(%w+):(%a*)$")
+        local inputId, layer = M.ParseReplacedKey(comboId)
         local input = inputId and M.BY_ID[inputId]
         DEFAULT_CHAT_FRAME:AddMessage(format("  %s = %s: %s, replaceable %s, key %s", comboId, action,
             input and self:State(input, layer) or "?", tostring(input and self:Replaceable(input, layer)),
@@ -2005,7 +2265,13 @@ function M:Init()
         end
         -- Let the game set its own bindings first
         C_Timer.After(event == "PLAYER_ENTERING_WORLD" and 1 or 0, function()
-            if event == "PLAYER_REGEN_ENABLED" then M:Repair() else M:Apply() end
+            if event == "PLAYER_REGEN_ENABLED" then
+                M:Repair()
+                -- A page's picture missing in the fight
+                if M.marksLater then M:UpdateMarks() end
+            else
+                M:Apply()
+            end
         end)
     end)
     -- The game sets its own pad bindings at many moments (its windows, its

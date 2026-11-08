@@ -971,9 +971,12 @@ local function keysOf(action)
     for _, input in ipairs(M().INPUTS) do
         if M():InputEnabled(input) and not input.layer then
             for _, layer in ipairs(M().LAYERS) do
-                if M():Get(input.id, layer) == action or M():GetReplaced(input.id, layer) == action then
-                    found[#found + 1] = K.ComboMarkup(input.id, layer, 16)
+                local on = M():Get(input.id, layer) == action or M():GetReplaced(input.id, layer) == action
+                -- (or on a page of its own: page 2, 3)
+                for page = 2, M().PAGES do
+                    if M():GetPageReplaced(input.id, layer, page) == action then on = true end
                 end
+                if on then found[#found + 1] = K.ComboMarkup(input.id, layer, 16) end
             end
         end
     end

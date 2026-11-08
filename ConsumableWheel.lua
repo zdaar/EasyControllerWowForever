@@ -1407,7 +1407,8 @@ end
 -- (back paddles, L3 / R3); nil for a key with none shown
 function W.ButtonCenter(comboId)
     local M = CK.Mapping
-    local inputId, layer = (comboId or ""):match("^(%w+):(%a*)$")
+    -- (a page's own: "A:LT@2", the same button)
+    local inputId, layer = (comboId or ""):match("^(%w+):(%a*)")
     local input = inputId and M and M.BY_ID[inputId]
     if not input then return nil end
     local f

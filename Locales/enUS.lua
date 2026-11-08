@@ -924,4 +924,17 @@ CK.L = {
     GUIDE_PLACE_SPELLS = "Put my spells",
     GUIDE_FINISH = "Finish",
     GUIDE_AGAIN = "Run this guide again: Home › Guide, or /ec welcome",
+    -- The game's bar pages (Gamepad tab, Mapping.lua: Pages)
+    LBL_PAGES = "Pages",
+    MAP_PAGE_SHORT = "P%d",
+    MAP_PAGE_N = "Page %d",
+    TIP_PAGES = "The game's gamepad bar has three pages (its page key). On page 2 and 3 the face buttons and the D-pad can do something of their own, each in the same place: the same layout, other actions. What a page leaves alone does what it does on page 1. Works in combat: the page is read on each press.",
+    MAP_PAGE_ALL = "The same on every page: only the face buttons and the D-pad change with the page. Change it on page 1.",
+    MAP_PAGE_BOUND = "A game function (a key binding) is on one of %s's layers on page 1: a binding is the same on every page, so its pages can't differ. Put a spell, a wheel or Nothing there on page 1 to use them.",
+    MAP_PAGE_OWN = "Page %d's own, instead of page 1's (%s). X: the same as page 1 again.",
+    MAP_PAGE_GAME = "The game's button on page %d (its slot of this page), while page 1 replaces it. X: the same as page 1 again.",
+    MAP_PAGE_SAME = "The same as page 1. A gives page %d its own action here.",
+    V_PAGE = "Page",
+    V_SAME_PAGE1 = "As page 1",
+    TOAST_SAME_AS_PAGE1 = "Page %d: the same as page 1 again",
 }

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.19.4-zdaar.1
+
+- **Replaced buttons per page** (fork): the game's gamepad bar has three pages, and until now a
+  replaced button did the same on all of them. In the Gamepad tab, next to the layers, pick a
+  page (P1, P2, P3): on page 2 and 3 the face buttons and the D-pad (every layer: alone, LT, RT,
+  LT + RT) can do something of their own, each in the same place on the pad, so one layout learned
+  gives other actions on another page. A button a page leaves alone does what it does on page 1
+  (drawn dimmer there); X on a page's own makes it the same as page 1 again. A spell, an item or a
+  macro put on a D-pad slot of page 2 goes in the game's own slot of that page, as before. Works in
+  combat: nothing is rebound when the page turns, the button reads the page on each press. Page 1
+  is the replaced buttons you already had: nothing to redo. The profiles keep the pages, and
+  Restore gives every page back to the game. A game function (a key binding) can't differ by page,
+  so it stays page 1's on every page.
+
 ## 1.19.4
 
 - **Move / size works again with the game's latest build** (reported: errors over and over while

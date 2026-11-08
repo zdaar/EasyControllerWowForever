@@ -915,4 +915,17 @@ CK.LOCALES.frFR = {
     GUIDE_PLACE_SPELLS = "Poser mes sorts",
     GUIDE_FINISH = "Terminer",
     GUIDE_AGAIN = "Relancer ce guide : Accueil › Guide, ou /ec welcome",
+    -- Les pages de la barre du jeu (onglet Manette, Mapping.lua : Pages)
+    LBL_PAGES = "Pages",
+    MAP_PAGE_SHORT = "P%d",
+    MAP_PAGE_N = "Page %d",
+    TIP_PAGES = "La barre manette du jeu a trois pages (sa touche de page). Sur les pages 2 et 3, les boutons de face et la croix peuvent faire autre chose, chacun à la même place : la même disposition, d'autres actions. Ce qu'une page ne change pas fait la même chose qu'en page 1. Marche en combat : la page est lue à chaque appui.",
+    MAP_PAGE_ALL = "Pareil sur toutes les pages : seuls les boutons de face et la croix changent avec la page. À modifier en page 1.",
+    MAP_PAGE_BOUND = "Une fonction du jeu (un raccourci) est sur une couche de %s en page 1 : un raccourci est le même sur toutes les pages, ses pages ne peuvent pas différer. Mettez-y un sort, une roue ou Rien en page 1 pour les utiliser.",
+    MAP_PAGE_OWN = "Propre à la page %d, à la place de celui de la page 1 (%s). X : comme la page 1.",
+    MAP_PAGE_GAME = "Le bouton du jeu en page %d (son emplacement de cette page), alors que la page 1 le remplace. X : comme la page 1.",
+    MAP_PAGE_SAME = "Comme la page 1. A donne ici une action propre à la page %d.",
+    V_PAGE = "Page",
+    V_SAME_PAGE1 = "Comme page 1",
+    TOAST_SAME_AS_PAGE1 = "Page %d : de nouveau comme la page 1",
 }
