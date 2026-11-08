@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.19.4-zdaar.4
+
+- **/ec binds shows where A, B, X and Y's pictures are**: for each, the game's button it sits on
+  (shown, its alpha, its place, its level) and the picture over it (shown, seen, alpha, level,
+  action), and whether the trigger toggle and the compact bar are on. For a report of page 2's
+  pictures not seen on the face buttons.
+
 ## 1.19.4-zdaar.3
 
 - **/ec binds names each picture by its button and layer** ("A alone = spell:8092", "LEFT LTRT =

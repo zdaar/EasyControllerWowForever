@@ -2312,6 +2312,27 @@ function M:Diagnose()
     table.sort(shown)
     DEFAULT_CHAT_FRAME:AddMessage(format("  window open %s | routed %s", tostring(not self:CoreActive()), table.concat(routed, " ")))
     DEFAULT_CHAT_FRAME:AddMessage("  marks: " .. (#shown > 0 and table.concat(shown, ", ") or "none"))
+    -- The face buttons alone: the game's button a picture sits on, whether
+    -- it is seen (shown, its alpha with its parents', where), and the
+    -- picture over it. The trigger toggle draws buttons of its own over the
+    -- game's (hidden), with ours on them.
+    local toggle = CK.Toggle and CK.Toggle.On and CK.Toggle:On()
+    DEFAULT_CHAT_FRAME:AddMessage(format("  trigger toggle %s, compact %s", tostring(toggle),
+        tostring(CK.Paddles.CompactBar and CK.Paddles.CompactBar())))
+    local function num(v, f) v = CK.Plain(v) return v and format(f or "%.0f", v) or "?" end
+    for _, id in ipairs({ "A", "B", "X", "Y" }) do
+        local native = self:NativeBarButton(M.BY_ID[id], "")
+        local mark = native and marks[native]
+        if native then
+            local x, y = native:GetCenter()
+            DEFAULT_CHAT_FRAME:AddMessage(format("  %s: %s seen %s a %s at %s,%s lvl %s | mark %s seen %s a %s lvl %s %s",
+                id, ((native:GetName() or "?"):gsub("^GamepadMainActionBarFramePageUnit", "")), tostring(native:IsVisible()),
+                num(native:GetEffectiveAlpha(), "%.2f"), num(x), num(y), num(native:GetFrameLevel()),
+                tostring(mark and mark:IsShown()), tostring(mark and mark:IsVisible()),
+                mark and num(mark:GetEffectiveAlpha(), "%.2f") or "-", mark and num(mark:GetFrameLevel()) or "-",
+                tostring(mark and mark.action)))
+        end
+    end
     -- What is saved, and whether it can be bound
     for comboId, action in pairs(settings().replaced) do
         local inputId, layer = M.ParseReplacedKey(comboId)
