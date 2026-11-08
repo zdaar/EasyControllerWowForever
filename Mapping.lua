@@ -2295,14 +2295,23 @@ function M:Diagnose()
     DEFAULT_CHAT_FRAME:AddMessage(format("  page %d, id now %s, page ids %s, hooked %s, drawn for page %s",
         self:CurrentPage(), tostring(ref and ref:GetID()), ids and table.concat(ids, " / ") or "none",
         tostring(self.pagesHooked), tostring(self.shownPage)))
-    local routed, shown = {}, {}
+    -- The routed buttons, and each picture by the button and layer it sits
+    -- on ("Y alone", "LEFT LT+RT"), on its own line
+    local routed, shown, where = {}, {}, {}
     for id in pairs(self.padRouted) do routed[#routed + 1] = id end
+    for _, input in ipairs(M.INPUTS) do
+        for _, layer in ipairs(M.LAYERS) do
+            local native = input.bar and self:NativeBarButton(input, layer)
+            if native then where[native] = input.id .. " " .. (layer == "" and "alone" or layer) end
+        end
+    end
     for native, mark in pairs(marks) do
-        if mark:IsShown() then shown[#shown + 1] = tostring(native:GetName()) .. "=" .. tostring(mark.action) end
+        if mark:IsShown() then shown[#shown + 1] = (where[native] or tostring(native:GetName())) .. " = " .. tostring(mark.action) end
     end
     table.sort(routed)
     table.sort(shown)
-    DEFAULT_CHAT_FRAME:AddMessage("  routed " .. table.concat(routed, " ") .. " | marks " .. table.concat(shown, ", "))
+    DEFAULT_CHAT_FRAME:AddMessage(format("  window open %s | routed %s", tostring(not self:CoreActive()), table.concat(routed, " ")))
+    DEFAULT_CHAT_FRAME:AddMessage("  marks: " .. (#shown > 0 and table.concat(shown, ", ") or "none"))
     -- What is saved, and whether it can be bound
     for comboId, action in pairs(settings().replaced) do
         local inputId, layer = M.ParseReplacedKey(comboId)

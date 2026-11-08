@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.19.4-zdaar.3
+
+- **/ec binds names each picture by its button and layer** ("A alone = spell:8092", "LEFT LTRT =
+  bar:top:y") on a line of its own, and says whether a window is open (the bindings are let go
+  then). The game's frame names wrapped into the routed list and read as buttons.
+
 ## 1.19.4-zdaar.2
 
 - **Wand, else the game's button** (fork), a new action in the Gamepad tab's Game list, for any
