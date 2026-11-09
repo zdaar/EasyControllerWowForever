@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.19.4-zdaar.5
+
+- **The game's buttons get the release too when the addon routes a button** (reported: with A
+  routed for page 2, page 1's A jumped but in water the character kept swimming up; the jump was
+  never let go). A routed button that leaves a layer to the game (Jump, Interact's hold to loot, a
+  slot of its bars, the targeting bars with LB / RB held) now presses that button on the press and
+  releases it on the release, as the game's own binding does. The release goes to the button
+  pressed, even if a trigger, a stance or the page changed in between. A macro in the game's slot
+  still runs once, on the press. The same for a stance's relay bound to a key.
+
 ## 1.19.4-zdaar.4
 
 - **/ec binds shows where A, B, X and Y's pictures are**: for each, the game's button it sits on

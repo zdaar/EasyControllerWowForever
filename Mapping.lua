@@ -1432,6 +1432,8 @@ local ROUTE = [[
             for i = 1, 3 do
                 local game = self:GetFrameRef("ck-sh" .. i)
                 if game and self:GetAttribute("ck-sh-on" .. i) and game:IsVisible() then
+                    -- (its release too: "ckupsh<i>")
+                    self:SetAttribute("ck-pressed", "sh" .. i)
                     return "cksh" .. i
                 end
             end
@@ -1452,9 +1454,10 @@ local header
 local routers = {}      -- paddle -> its secure button
 
 -- A wheel on a layer gets the key's release too (its hold option)
-local function setRelease(r, layer, b, action)
-    -- (the wand too: the game's button let go)
-    local wheel = b and type(action) == "string" and (action:find("^wheel:") or action:find("^wand:")) and b
+-- The wand, and a game's button (bar: its relay), get it too: the game's
+-- button let go, as its own binding does
+local function setRelease(r, layer, b, action, bar)
+    local wheel = b and (bar or type(action) == "string" and (action:find("^wheel:") or action:find("^wand:"))) and b
     r:SetAttribute("ck-up-" .. layer, wheel and true or nil)
     r:SetAttribute("*clickbutton-ckup" .. layer, wheel or nil)
 end
@@ -1604,6 +1607,25 @@ M.relayBars = {}        -- relay's name -> the bar button it presses ("bar:right
 -- storage id on the action page; the stance bar's in a stance. Anything
 -- else (spells, items, flyouts, the game's own functions) keeps the click.
 local RELAY_SLOT = [[
+    -- The release (reported: A routed, page 1's Jump got the press and never
+    -- the release, the character kept swimming up): the game's button let
+    -- go, the one pressed (a stance taken meanwhile changes nothing). From a
+    -- router, its "ckup" click; bound to a key, the key let go.
+    local up
+    if self:GetAttribute("ck-onkey") then
+        up = not down
+        self:SetAttribute("useOnKeyDown", down and true or false)
+    else
+        up = strfind(button or "", "ckup", 1, true) == 1
+    end
+    if up then
+        local text = self:GetAttribute("ck-up-text")
+        self:SetAttribute("ck-up-text", nil)
+        if not text then return false end
+        self:SetAttribute("type", "macro")
+        self:SetAttribute("macrotext", text)
+        return
+    end
     local b = self:GetFrameRef("ck-native")
     -- In a stance (stealth, a form, a warrior's stance): the stance bar's
     -- button, as the game shows its stance bar (a bonus bar on). Not the
@@ -1613,6 +1635,7 @@ local RELAY_SLOT = [[
     local inStance = stance and (GetBonusBarOffset() or 0) > 0
     if inStance then b = stance end
     self:SetAttribute("macrotext", self:GetAttribute(inStance and "ck-text-stance" or "ck-text-native"))
+    self:SetAttribute("ck-up-text", self:GetAttribute(inStance and "ck-text-stance-up" or "ck-text-native-up"))
     local id = b and b:GetID()
     local slot
     if id and id > 0 then
@@ -1620,6 +1643,8 @@ local RELAY_SLOT = [[
         slot = id + (page - 1) * 12
     end
     if slot and GetActionInfo(slot) == "macro" then
+        -- (a macro runs once, on the press: nothing on the release)
+        self:SetAttribute("ck-up-text", nil)
         self:SetAttribute("type", "action")
         self:SetAttribute("action", slot)
     else
@@ -1646,8 +1671,10 @@ local function newRelay(id, macro, onKey)
         local n = 0
         for _ in pairs(relays) do n = n + 1 end
         r = CK.NewFrame("Button", "ControllerKeyboardBarRelay" .. (n + 1), nil, "SecureActionButtonTemplate")
-        if onKey then r:RegisterForClicks("AnyDown") else r:RegisterForClicks("AnyDown", "AnyUp") end
+        r:RegisterForClicks("AnyDown", "AnyUp")
         r:SetAttribute("useOnKeyDown", onKey and true or false)
+        -- Bound to a key: the key's release read from the click (RELAY_SLOT)
+        r:SetAttribute("ck-onkey", onKey and true or nil)
         header = header or CK.NewFrame("Frame", nil, nil, "SecureHandlerBaseTemplate")
         SecureHandlerWrapScript(r, "OnClick", header, RELAY_SLOT)
         r:Hide()
@@ -1656,16 +1683,18 @@ local function newRelay(id, macro, onKey)
     local P = CK.Paddles
     local native = P:NativeButton(id)
     local stance = M:StanceMacro(id) and P:StanceButton(id) or nil
-    local function click(b)
+    local function click(b, down)
         local name = b and b:GetName()
-        return name and ("/click " .. name .. " LeftButton true") or nil
+        return name and ("/click " .. name .. " LeftButton " .. (down and "true" or "false")) or nil
     end
-    -- The click for each case, chosen on the press (RELAY_SLOT)
-    local nativeText = click(native) or macro
+    -- The click for each case, chosen on the press, and its release (RELAY_SLOT)
+    local nativeText = click(native, true) or macro
     r:SetAttribute("type", "macro")
     r:SetAttribute("macrotext", nativeText)
     r:SetAttribute("ck-text-native", nativeText)
-    r:SetAttribute("ck-text-stance", click(stance))
+    r:SetAttribute("ck-text-stance", click(stance, true))
+    r:SetAttribute("ck-text-native-up", click(native, false))
+    r:SetAttribute("ck-text-stance-up", click(stance, false))
     setRef(r, "ck-native", native)
     setRef(r, "ck-stance", stance)
     M.relayMacros[r:GetName()] = macro
@@ -1689,9 +1718,14 @@ end
 M.SHOULDER_BARS = { "friendlyTargeting", "hostileTargeting", "shortcuts" }
 local shoulderRelays = {}
 
--- A relay "/click"ing one of their buttons, pressed then released as the
--- game's binding does (its targeting acts on the press, its group
--- navigation stops on the release)
+-- A relay "/click"ing one of their buttons: pressed on the key's press,
+-- released on its release (the router's "ckupsh" click), as the game's
+-- binding does (its targeting acts on the press, its group navigation
+-- stops on the release)
+local SHOULDER = [[
+    local up = strfind(button or "", "ckup", 1, true) == 1
+    self:SetAttribute("macrotext", self:GetAttribute(up and "ck-up" or "ck-down"))
+]]
 local function shoulderRelay(name)
     local r = shoulderRelays[name]
     if not r then
@@ -1701,7 +1735,11 @@ local function shoulderRelay(name)
         r:RegisterForClicks("AnyDown", "AnyUp")
         r:SetAttribute("useOnKeyDown", false)
         r:SetAttribute("type", "macro")
-        r:SetAttribute("macrotext", "/click " .. name .. " LeftButton true\n/click " .. name .. " LeftButton false")
+        r:SetAttribute("ck-down", "/click " .. name .. " LeftButton true")
+        r:SetAttribute("ck-up", "/click " .. name .. " LeftButton false")
+        r:SetAttribute("macrotext", r:GetAttribute("ck-down"))
+        header = header or CK.NewFrame("Frame", nil, nil, "SecureHandlerBaseTemplate")
+        SecureHandlerWrapScript(r, "OnClick", header, SHOULDER)
         r:Hide()
         shoulderRelays[name] = r
     end
@@ -1717,10 +1755,15 @@ function M:SetShoulderRefs(r, input)
             SecureHandlerSetFrameRef(r, "ck-sh" .. i, game)
             r:SetAttribute("*clickbutton-cksh" .. i, shoulderRelay(name))
             r:SetAttribute("ck-sh-on" .. i, true)
+            -- Its release on the key's (ROUTE)
+            r:SetAttribute("ck-up-sh" .. i, true)
+            r:SetAttribute("*clickbutton-ckupsh" .. i, shoulderRelay(name))
         else
             r:SetAttribute("frameref-ck-sh" .. i, nil)
             r:SetAttribute("*clickbutton-cksh" .. i, nil)
             r:SetAttribute("ck-sh-on" .. i, nil)
+            r:SetAttribute("ck-up-sh" .. i, nil)
+            r:SetAttribute("*clickbutton-ckupsh" .. i, nil)
         end
     end
 end
@@ -1825,7 +1868,7 @@ local function setTarget(r, input, key, comboId, t)
     r:SetAttribute("*clickbutton-ckrbstop" .. key, wand)
     r:SetAttribute("*clickbutton-ck" .. key, b)
     r:SetAttribute("ck-has-" .. key, b and true or (t and t.none and "none") or nil)
-    setRelease(r, key, b, t and t.action)
+    setRelease(r, key, b, t and t.action, t and t.bar ~= nil)
 end
 
 function M:ApplyPad(input, targets, replaced, pages)
